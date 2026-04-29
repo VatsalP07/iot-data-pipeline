@@ -1,0 +1,9 @@
+**pycache**/
+*.pyc
+.env
+*.log
+db_data/
+grafana_data/
+node_modules/
+.DS_Store
+.env

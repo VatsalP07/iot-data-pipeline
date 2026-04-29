@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>IoT Monitoring System</title>
+
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            margin: 0;
+            background: #0f172a;
+            color: white;
+        }
+
+        header {
+            padding: 20px;
+            background: #020617;
+            border-bottom: 1px solid #1e293b;
+        }
+
+        header h1 {
+            margin: 0;
+            color: #38bdf8;
+        }
+
+        header p {
+            margin: 5px 0 0;
+            color: #94a3b8;
+        }
+
+        .container {
+            padding: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: #1e293b;
+            padding: 15px;
+            border-radius: 12px;
+            transition: transform 0.2s;
+        }
+
+        .card:hover {
+            transform: scale(1.02);
+        }
+
+        input, select, button {
+            padding: 8px;
+            margin: 5px;
+            border-radius: 6px;
+            border: none;
+        }
+
+        button {
+            background: #38bdf8;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        th, td {
+            padding: 10px;
+            border-bottom: 1px solid #334155;
+            text-align: left;
+        }
+
+        th {
+            color: #94a3b8;
+        }
+
+        .CRITICAL {
+            color: #ef4444;
+            font-weight: bold;
+            animation: blink 1s infinite;
+        }
+
+        .HIGH { color: orange; }
+        .MEDIUM { color: yellow; }
+        .LOW { color: lightgreen; }
+
+        @keyframes blink {
+            50% { opacity: 0.4; }
+        }
+
+        .badge {
+            background: red;
+            padding: 5px 10px;
+            border-radius: 20px;
+        }
+
+        .status-good { color: lightgreen; }
+        .status-bad { color: red; }
+
+        .center {
+            text-align: center;
+            color: #94a3b8;
+        }
+    </style>
+</head>
+
+<body>
+
+<header>
+    <h1> Real-Time IoT Monitoring System</h1>
+    <p>Kafka + Spark + ML + FastAPI + TimescaleDB + Grafana</p>
+</header>
+
+<div class="container">
+
+    <!-- SYSTEM -->
+    <div class="card">
+        <h3>System Status</h3>
+        <p id="status">Checking...</p>
+        <p style="color:lightgreen;">● Live Streaming Active</p>
+    </div>
+
+    <!-- TOTAL -->
+    <div class="card">
+        <h3>
+            Total Alerts: <span id="totalAlerts">0</span><br><br>
+            Critical: <span id="criticalCount" class="badge">0</span>
+        </h3>
+    </div>
+
+    <!-- FILTERS -->
+    <div class="card">
+        <h3>Filters</h3>
+
+        <select id="severity">
+            <option value="">All</option>
+            <option>CRITICAL</option>
+            <option>HIGH</option>
+            <option>MEDIUM</option>
+            <option>LOW</option>
+        </select>
+
+        <input id="sensor" placeholder="sensor_1">
+        <input id="limit" type="number" value="20">
+
+        <button onclick="loadAlerts()">Apply</button>
+    </div>
+
+    <!-- STATS -->
+    <div class="card">
+        <h3>Stats</h3>
+        <div id="stats">Loading...</div>
+        <p id="lastUpdated"></p>
+        <p id="lastAlertTime"></p>
+    </div>
+
+    <!-- ML -->
+    <div class="card">
+        <h3>ML Prediction</h3>
+
+        <input id="temp" placeholder="Temperature">
+        <input id="z" placeholder="Z-score">
+
+        <button onclick="predict()">Check</button>
+
+        <p id="prediction"></p>
+    </div>
+
+    <!-- EXPLAIN -->
+    <div class="card">
+        <h3>How It Works</h3>
+        <p class="center">
+            Streaming via Kafka + Spark + Z-score + ML validation +Alerts
+        </p>
+    </div>
+
+</div>
+
+<!-- ALERTS FULL WIDTH -->
+<div class="card" style="margin:20px;">
+    <h3>Alerts</h3>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Sensor</th>
+                <th>Temp</th>
+                <th>Z</th>
+                <th>Severity</th>
+                <th>Time</th>
+            </tr>
+        </thead>
+        <tbody id="alertsBody"></tbody>
+    </table>
+</div>
+
+<script>
+
+const API = "http://localhost:8000";
+const alertSound = new Audio("https://www.soundjay.com/buttons/beep-01a.mp3");
+
+// =========================
+// STATS
+// =========================
+async function loadStats() {
+    try {
+        const res = await fetch(API + "/stats");
+        const data = await res.json();
+
+        let html = "";
+        let critical = 0;
+
+        for (let key in data) {
+            html += `<p>${key}: ${data[key]}</p>`;
+            if (key === "CRITICAL") critical = data[key];
+        }
+
+        document.getElementById("stats").innerHTML = html;
+        document.getElementById("criticalCount").innerText = critical;
+
+        updateTime();
+
+    } catch {
+        document.getElementById("stats").innerHTML = "Error loading stats";
+    }
+}
+
+// =========================
+// ALERTS
+// =========================
+async function loadAlerts() {
+    document.getElementById("alertsBody").innerHTML = "<tr><td colspan='5'>Loading...</td></tr>";
+
+    try {
+        let severity = document.getElementById("severity").value;
+        let sensor = document.getElementById("sensor").value;
+        let limit = document.getElementById("limit").value;
+
+        let url = API + "/alerts?limit=" + limit;
+
+        if (severity) url += "&severity=" + severity;
+        if (sensor) url += "&sensor_id=" + sensor;
+
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (data.length === 0) {
+            document.getElementById("alertsBody").innerHTML =
+                "<tr><td colspan='5'>No alerts found</td></tr>";
+            return;
+        }
+
+        let rows = "";
+        let hasCritical = false;
+        let latestTime = data[0].time;
+
+        data.forEach(a => {
+            if (a.severity === "CRITICAL") hasCritical = true;
+
+            rows += `
+            <tr>
+                <td>${a.sensor_id}</td>
+                <td>${a.temperature}</td>
+                <td>${a.z_score.toFixed(2)}</td>
+                <td class="${a.severity}">${a.severity}</td>
+                <td>${a.time}</td>
+            </tr>`;
+        });
+
+        document.getElementById("alertsBody").innerHTML = rows;
+        document.getElementById("totalAlerts").innerText = data.length;
+        document.getElementById("lastAlertTime").innerText =
+            "Last Alert: " + latestTime;
+
+        if (hasCritical) alertSound.play();
+
+        updateTime();
+
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+// =========================
+// ML
+// =========================
+async function predict() {
+    try {
+        const temp = parseFloat(document.getElementById("temp").value);
+        const z = parseFloat(document.getElementById("z").value);
+
+        const res = await fetch(API + "/predict", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ temperature: temp, z_score: z })
+        });
+
+        const data = await res.json();
+
+        document.getElementById("prediction").innerText =
+            data.anomaly ? "Anomaly Detected" : "Normal";
+
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+// =========================
+// STATUS
+// =========================
+async function checkStatus() {
+    try {
+        await fetch(API + "/stats");
+        document.getElementById("status").innerText = "● System Healthy";
+        document.getElementById("status").className = "status-good";
+    } catch {
+        document.getElementById("status").innerText = "● System Down";
+        document.getElementById("status").className = "status-bad";
+    }
+}
+
+// =========================
+// TIME
+// =========================
+function updateTime() {
+    document.getElementById("lastUpdated").innerText =
+        "Updated: " + new Date().toLocaleTimeString();
+}
+
+// =========================
+// INIT
+// =========================
+window.onload = () => {
+    loadStats();
+    loadAlerts();
+    checkStatus();
+
+    setInterval(() => {
+        loadStats();
+        loadAlerts();
+        checkStatus();
+    }, 5000);
+};
+
+</script>
+
+</body>
+</html>
